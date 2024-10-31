@@ -31,7 +31,6 @@ rate: Float (0.0 to 5.0), required – initial rating in 0.0 format.
 telephone_number: String, required – contact phone number.
 jobs_done: Integer, required – total completed jobs by the mover.
 Response: Returns status and the added mover information in JSON format.
-Status: Completed
 
 2. Delete a Mover
 
@@ -40,7 +39,6 @@ Endpoint: DELETE /movers/<id>
 Parameters:
 id: Path parameter, required – ID of the mover to delete.
 Response: Returns a success status on successful deletion, or an error message if the ID is not found.
-Status: Completed
 
 3. Get All Movers (Sorted)
 
@@ -48,7 +46,6 @@ Description: Retrieves a list of all movers, sorted alphabetically by mover name
 Endpoint: GET /movers
 Response: JSON array of mover objects, each containing:
 id, name, rate, telephone_number, jobs_done
-Status: Completed
 
 4. New Recommendation
 
@@ -58,14 +55,14 @@ Request Body: JSON object containing:
 rate: Float (0.0 to 5.0), required – the rating provided by the user for this mover.
 Response: Returns the updated mover information with the recalculated average rating.
 Calculation Logic: Each new rating will update the mover's average rating based on the previous ratings and total completed jobs.
-Status: Pending
 
 _____________________
 Implementation Notes:
  - Gin Package: Utilize Gin functions for JSON handling:
 	Error handling: context.JSON(http.StatusBadRequest, gin.H{"error": "<error_message>"})
 	Success response: context.JSON(http.StatusCreated, <response_data>)
-		JSON Parsing: context.BindJSON(&<struct>)
+	sing context.JSON() instead of less optimized context.IntendedJSON()
+	JSON Parsing: context.BindJSON(&<struct>)
  - Data Storage: The list of movers is currently stored as an in-memory array but can be migrated to a database in future versions.
 */
 
@@ -104,6 +101,18 @@ var movers = []mover{
 	{ID: 15, Name: "Metro Moving Solutions", Rate: 4.4, TelephoneNumber: "+14028854721", JobsAmount: 1390},
 }
 
+// Helper functions
+func extractId(context *gin.Context) (int, error) {
+	idParam := context.Param("id")
+	intId, err := strconv.Atoi(idParam)
+	if err != nil {
+		context.JSON(http.StatusBadRequest, gin.H{"message": "Conversion error"})
+		return -1, err
+	} else {
+		return intId, nil
+	}
+}
+
 func getMoverById(id int) (*mover, error) {
 	for i, mover := range movers {
 		if mover.ID == id {
@@ -111,10 +120,6 @@ func getMoverById(id int) (*mover, error) {
 		}
 	}
 	return nil, errors.New("mover not found")
-}
-
-func deleteElement(slice []mover, index int) []mover {
-	return slices.Delete(slice, index, index+1)
 }
 
 func findMoverIndexById(id int) (int, error) {
@@ -126,12 +131,27 @@ func findMoverIndexById(id int) (int, error) {
 	return -1, errors.New("mover not found")
 }
 
-// GET request. Sort by Rate. If rates are equal, sort by ID
-func getMovers(context *gin.Context) {
-	if movers == nil {
-		context.JSON(http.StatusBadRequest, gin.H{"error": "movers list is empty"})
-		return
+func deleteElement(slice []mover, index int) []mover {
+	return slices.Delete(slice, index, index+1)
+}
+
+func moverNotFoundError(context *gin.Context, err error) bool {
+	if err != nil {
+		context.JSON(http.StatusNotFound, gin.H{"message": "Mover not found"})
+		return true
 	}
+	return false
+}
+
+func BindJsonInvalidJsonError(context *gin.Context, ourMover *mover) bool {
+	if err := context.BindJSON(ourMover); err != nil {
+		context.JSON(http.StatusBadRequest, gin.H{"error": "Invalid JSON"})
+		return true
+	}
+	return false
+}
+
+func sortMoversByRateAndID(movers []mover) {
 	sort.Slice(movers, func(i, j int) bool {
 		if movers[i].Rate == movers[j].Rate {
 			return movers[i].ID < movers[j].ID
@@ -139,16 +159,27 @@ func getMovers(context *gin.Context) {
 			return movers[i].Rate > movers[j].Rate
 		}
 	})
+}
+
+// Main Functions
+// GET request. Sort by Rate. If rates are equal, sort by ID
+func getMovers(context *gin.Context) {
+	if len(movers) == 0 {
+		context.JSON(http.StatusBadRequest, gin.H{"error": "movers list is empty"})
+		return
+	}
+
+	sortMoversByRateAndID(movers)
 
 	context.JSON(http.StatusOK, movers)
 }
 
 // POST request. Add a new mover
 func addMover(context *gin.Context) {
+
 	var newMover mover
 
-	if err := context.BindJSON(&newMover); err != nil {
-		context.JSON(http.StatusBadRequest, gin.H{"error": "Invalid JSON"})
+	if BindJsonInvalidJsonError(context, &newMover) {
 		return
 	}
 
@@ -158,17 +189,14 @@ func addMover(context *gin.Context) {
 
 // DELETE request. Delete mover by ID
 func deleteMover(context *gin.Context) {
-	id := context.Param("id")
-	intId, err := strconv.Atoi(id)
+	intId, err := extractId(context)
 	if err != nil {
-		context.JSON(http.StatusBadRequest, gin.H{"message": "Conversion error"})
 		return
 	}
 
 	moverIndex, err := findMoverIndexById(intId)
-	if err != nil {
-		context.JSON(http.StatusNotFound, gin.H{"message": "Mover not found"})
-		return
+	if moverNotFoundError(context, err) {
+		return // Exit if the mover wasn't found
 	}
 
 	movers = deleteElement(movers, moverIndex)
@@ -176,25 +204,22 @@ func deleteMover(context *gin.Context) {
 	context.JSON(http.StatusOK, gin.H{"message": "Mover deleted successfully"})
 }
 
-func updateMover(context *gin.Context) {
-	id := context.Param("id")
-	intId, err := strconv.Atoi(id)
+// POST request. Recommendation from users, updating average mover rate
+func recommendMover(context *gin.Context) {
+	intId, err := extractId(context)
 	if err != nil {
-		context.JSON(http.StatusBadRequest, gin.H{"message": "Conversion error"})
 		return
 	}
 
 	currMover, currErr := getMoverById(intId)
 
-	if currErr != nil {
-		context.JSON(http.StatusNotFound, gin.H{"message": "Mover not found"})
+	if moverNotFoundError(context, currErr) {
 		return
 	}
 
 	var updatedMover mover
 
-	if err := context.BindJSON(&updatedMover); err != nil {
-		context.JSON(http.StatusBadRequest, gin.H{"error": "Invalid JSON"})
+	if BindJsonInvalidJsonError(context, &updatedMover) {
 		return
 	}
 
@@ -218,7 +243,7 @@ func main() {
 	router.GET("/movers", getMovers)
 	router.POST("/movers", addMover)
 	router.DELETE("/movers/:id", deleteMover)
-	router.POST("/movers/:id/review", updateMover)
+	router.POST("/movers/:id/review", recommendMover)
 
 	err := router.Run("localhost:8080")
 	if err != nil {
