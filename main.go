@@ -90,14 +90,18 @@ func deleteElement(slice []mover, index int) []mover {
 	return slices.Delete(slice, index, index+1)
 }
 
-func sortMoversByRateAndID(movers []mover) {
-	sort.Slice(movers, func(i, j int) bool {
-		if movers[i].Rating == movers[j].Rating {
-			return movers[i].ID < movers[j].ID
+func sortMoversByRatingAndId(movers []mover) []mover {
+	moversCopy := make([]mover, len(movers))
+	copy(moversCopy, movers)
+
+	sort.Slice(moversCopy, func(i, j int) bool {
+		if moversCopy[i].Rating == moversCopy[j].Rating {
+			return moversCopy[i].ID < moversCopy[j].ID
 		} else {
-			return movers[i].Rating > movers[j].Rating
+			return moversCopy[i].Rating > moversCopy[j].Rating
 		}
 	})
+	return moversCopy
 }
 
 func checkMoverExists(newMover mover) bool {
@@ -137,9 +141,9 @@ func getMovers(context *gin.Context) {
 		return
 	}
 
-	sortMoversByRateAndID(movers)
+	sortedMovers := sortMoversByRatingAndId(movers)
 
-	context.JSON(http.StatusOK, movers)
+	context.JSON(http.StatusOK, sortedMovers)
 }
 
 // POST request. Add a new mover
